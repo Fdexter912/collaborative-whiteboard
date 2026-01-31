@@ -6,6 +6,11 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const RoomManager = require('./managers/RoomManager');
 const { handleRoomJoin, handleDisconnect } = require('./socket/RoomHandlers');
+const { 
+  handleDrawStroke, 
+  handleDeleteStroke, 
+  handleClearCanvas 
+} = require('./socket/drawingHandlers');
 
 const app = express();
 const httpServer = createServer(app);
@@ -26,7 +31,9 @@ const io = new Server(httpServer, {
     credentials: true
   },
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  // Increase max payload size for large strokes
+  maxHttpBufferSize: 1e6 // 1MB
 });
 
 // Initialize managers
@@ -54,9 +61,14 @@ app.get('/api/stats', (req, res) => {
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
 
-  // Register event handlers (factory pattern)
+  // Room handlers (Module 2)
   socket.on('room.join', handleRoomJoin(io, socket, roomManager));
   socket.on('disconnect', handleDisconnect(io, socket, roomManager));
+
+  // Drawing handlers (Module 3)
+  socket.on('draw.stroke', handleDrawStroke(io, socket, roomManager));
+  socket.on('draw.deleteStroke', handleDeleteStroke(io, socket, roomManager));
+  socket.on('draw.clear', handleClearCanvas(io, socket, roomManager));
 });
 
 // Error handling
