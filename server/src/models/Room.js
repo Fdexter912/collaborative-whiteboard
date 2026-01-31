@@ -5,34 +5,33 @@
  * 
  * Represents a collaborative whiteboard session.
  * Manages client connections and board state.
- * 
- * State ownership: Server is the source of truth.
- * Clients propose changes, server validates and broadcasts.
  */
 class Room {
   constructor(roomId) {
     this.id = roomId;
     
-    // Client tracking - Map for O(1) lookups
-    this.clients = new Map(); // socketId -> ClientInfo
+    // Client tracking
+    this.clients = new Map();
     
-    // Board state - Will be extended in Module 3
+    // Board state - UPDATED for Module 3
     this.boardState = {
-      strokes: [],      // Drawing strokes
-      textBlocks: []    // Markdown text blocks
+      strokes: [],        // Array of Stroke objects
+      textBlocks: []      // Will be used in Module 6
     };
     
     // Metadata
     this.createdAt = Date.now();
     this.lastActivity = Date.now();
+    
+    // Stats for monitoring
+    this.stats = {
+      totalStrokes: 0,
+      totalPoints: 0
+    };
   }
 
   /**
    * Add a client to this room
-   * 
-   * @param {string} socketId - Socket.IO connection ID
-   * @param {string} userId - User identifier (username/email)
-   * @returns {Object} Client information object
    */
   addClient(socketId, userId) {
     const clientInfo = {
@@ -49,9 +48,6 @@ class Room {
 
   /**
    * Remove a client from this room
-   * 
-   * @param {string} socketId - Socket.IO connection ID
-   * @returns {Object|null} Removed client info or null
    */
   removeClient(socketId) {
     const clientInfo = this.clients.get(socketId);
@@ -70,7 +66,6 @@ class Room {
 
   /**
    * Get all clients as an array
-   * Useful for broadcasting presence updates
    */
   getClientList() {
     return Array.from(this.clients.values());
@@ -78,7 +73,6 @@ class Room {
 
   /**
    * Check if room has no clients
-   * Used for automatic cleanup
    */
   isEmpty() {
     return this.clients.size === 0;
@@ -92,21 +86,80 @@ class Room {
   }
 
   /**
+   * Add a stroke to the board
+   * NEW for Module 3
+   */
+  addStroke(stroke) {
+    this.boardState.strokes.push(stroke);
+    this.lastActivity = Date.now();
+    
+    // Update stats
+    this.stats.totalStrokes++;
+    this.stats.totalPoints += stroke.points.length;
+    
+    return stroke;
+  }
+
+  /**
+   * Remove a stroke by ID
+   * NEW for Module 3
+   */
+  removeStroke(strokeId) {
+    const index = this.boardState.strokes.findIndex(s => s.id === strokeId);
+    
+    if (index !== -1) {
+      const removed = this.boardState.strokes.splice(index, 1)[0];
+      this.lastActivity = Date.now();
+      
+      // Update stats
+      this.stats.totalStrokes--;
+      this.stats.totalPoints -= removed.points.length;
+      
+      return removed;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Get stroke by ID
+   * NEW for Module 3
+   */
+  getStroke(strokeId) {
+    return this.boardState.strokes.find(s => s.id === strokeId) || null;
+  }
+
+  /**
+   * Clear all strokes
+   * NEW for Module 3
+   */
+  clearStrokes() {
+    const count = this.boardState.strokes.length;
+    this.boardState.strokes = [];
+    this.lastActivity = Date.now();
+    
+    // Reset stats
+    this.stats.totalStrokes = 0;
+    this.stats.totalPoints = 0;
+    
+    return count;
+  }
+
+  /**
    * Get room metadata for client synchronization
-   * Sent to clients on join
    */
   getMetadata() {
     return {
       id: this.id,
       clientCount: this.getClientCount(),
       createdAt: this.createdAt,
-      lastActivity: this.lastActivity
+      lastActivity: this.lastActivity,
+      stats: this.stats
     };
   }
 
   /**
    * Update last activity timestamp
-   * Called on any room interaction
    */
   touch() {
     this.lastActivity = Date.now();
@@ -124,6 +177,18 @@ class Room {
    */
   getIdleTime() {
     return Date.now() - this.lastActivity;
+  }
+
+  /**
+   * Get total data size (approximate)
+   * NEW for Module 3
+   */
+  getDataSize() {
+    let size = 0;
+    this.boardState.strokes.forEach(stroke => {
+      size += stroke.getSize ? stroke.getSize() : 0;
+    });
+    return size;
   }
 }
 
