@@ -4,6 +4,8 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const RoomManager = require('./managers/RoomManager');
+const { handleRoomJoin, handleDisconnect } = require('./socket/RoomHandlers');
 
 const app = express();
 const httpServer = createServer(app);
@@ -23,10 +25,12 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST'],
     credentials: true
   },
-  // Connection settings
   pingTimeout: 60000,
   pingInterval: 25000
 });
+
+// Initialize managers
+const roomManager = new RoomManager();
 
 // API Routes
 app.get('/health', (req, res) => {
@@ -40,8 +44,8 @@ app.get('/health', (req, res) => {
 
 app.get('/api/stats', (req, res) => {
   res.json({
+    ...roomManager.getStats(),
     connections: io.engine.clientsCount,
-    rooms: 0, // Will be updated when RoomManager is added
     uptime: process.uptime()
   });
 });
@@ -50,9 +54,9 @@ app.get('/api/stats', (req, res) => {
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
 
-  socket.on('disconnect', (reason) => {
-    console.log(`🔌 Client disconnected: ${socket.id} - Reason: ${reason}`);
-  });
+  // Register event handlers (factory pattern)
+  socket.on('room.join', handleRoomJoin(io, socket, roomManager));
+  socket.on('disconnect', handleDisconnect(io, socket, roomManager));
 });
 
 // Error handling
