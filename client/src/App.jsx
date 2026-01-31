@@ -1,11 +1,8 @@
 // client/src/App.jsx
+import RoomTest from './components/Roomtest'
+
 function App() {
-  return (
-    <div style={{ padding: '20px', fontFamily: 'system-ui, sans-serif' }}>
-      <h1>Collaborative Whiteboard</h1>
-      <p>Client initialization successful</p>
-    </div>
-  )
+  return <RoomTest />
 }
 
 export default App
