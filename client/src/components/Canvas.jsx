@@ -29,7 +29,8 @@ export default function Canvas({
   currentColor = '#000000',
   currentWidth = 2,
   width = 800,
-  height = 600
+  height = 600,
+//   darkMode = false
 }) {
   // Canvas refs
   const canvasRef = useRef(null);

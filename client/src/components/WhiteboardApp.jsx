@@ -1,19 +1,12 @@
 // client/src/components/WhiteboardApp.jsx
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRoom, useSocketEvent } from '../hooks/useSocket';
+import { useHistory } from '../hooks/useHistory';
 import socketService from '../services/socket';
 import Canvas from './Canvas';
 import Toolbar from './Toolbar';
-import { downloadCanvasAsPNG } from '../utils/canvas';
+import { downloadCanvasAsPNG, renderAllStrokes } from '../utils/canvas';
 
-/**
- * WhiteboardApp Component
- * 
- * Main whiteboard application that combines:
- * - Canvas for drawing
- * - Toolbar for controls
- * - Socket integration for real-time sync
- */
 export default function WhiteboardApp({ roomId, userId }) {
   // Room state
   const { joined, loading, clients, boardState, error } = useRoom(roomId, userId);
@@ -24,18 +17,33 @@ export default function WhiteboardApp({ roomId, userId }) {
   const [currentColor, setCurrentColor] = useState('#000000');
   const [currentWidth, setCurrentWidth] = useState(2);
   
-  // Canvas ref for download
-  const canvasRef = useRef(null);
+  // Dark mode state
+  const [darkMode, setDarkMode] = useState(() => {
+    // Load from localStorage
+    const saved = localStorage.getItem('darkMode');
+    return saved ? JSON.parse(saved) : false;
+  });
+  
+  // History for undo/redo
+  const { addToHistory, undo, redo, canUndo, canRedo, clearHistory } = useHistory();
 
   /**
-   * Initialize strokes from board state - FIXED
+   * Initialize strokes from board state
    */
   useEffect(() => {
     if (boardState?.strokes) {
       console.log('📋 Initializing strokes:', boardState.strokes.length);
       setStrokes(boardState.strokes);
+      clearHistory(); // Reset history when joining new room
     }
-  }, [boardState]);
+  }, [boardState, clearHistory]);
+
+  /**
+   * Save dark mode preference
+   */
+  useEffect(() => {
+    localStorage.setItem('darkMode', JSON.stringify(darkMode));
+  }, [darkMode]);
 
   /**
    * Listen for new strokes from server
@@ -59,6 +67,7 @@ export default function WhiteboardApp({ roomId, userId }) {
   useSocketEvent('draw.clear', ({ clearedBy }) => {
     console.log('🧹 Canvas cleared by:', clearedBy);
     setStrokes([]);
+    clearHistory();
   });
 
   /**
@@ -67,10 +76,16 @@ export default function WhiteboardApp({ roomId, userId }) {
   const handleStrokeComplete = useCallback((stroke) => {
     console.log('✏️ Stroke completed, sending to server...');
     
-    // Optimistic update - add locally immediately
+    // Add to history for undo
+    addToHistory({
+      type: 'add',
+      stroke: stroke
+    });
+    
+    // Optimistic update
     const optimisticStroke = {
       ...stroke,
-      id: `temp_${Date.now()}`, // Temporary ID
+      id: `temp_${Date.now()}`,
       author: userId,
       timestamp: Date.now()
     };
@@ -82,10 +97,39 @@ export default function WhiteboardApp({ roomId, userId }) {
     
     if (!sent) {
       console.error('❌ Failed to send stroke - not connected');
-      // Remove optimistic stroke
       setStrokes(prev => prev.filter(s => s.id !== optimisticStroke.id));
     }
-  }, [userId]);
+  }, [userId, addToHistory]);
+
+  /**
+   * Handle undo
+   */
+  const handleUndo = useCallback(() => {
+    const action = undo();
+    if (!action) return;
+    
+    if (action.type === 'add') {
+      // Remove the last stroke
+      const lastStroke = strokes[strokes.length - 1];
+      if (lastStroke) {
+        setStrokes(prev => prev.slice(0, -1));
+        // Note: In a production app, you'd sync this with server
+      }
+    }
+  }, [undo, strokes]);
+
+  /**
+   * Handle redo
+   */
+  const handleRedo = useCallback(() => {
+    const action = redo();
+    if (!action) return;
+    
+    if (action.type === 'add') {
+      // Re-add the stroke
+      setStrokes(prev => [...prev, action.stroke]);
+    }
+  }, [redo]);
 
   /**
    * Handle clear canvas
@@ -95,43 +139,109 @@ export default function WhiteboardApp({ roomId, userId }) {
       return;
     }
     
-    // Optimistic update
     setStrokes([]);
-    
-    // Send to server
+    clearHistory();
     socketService.send('draw.clear', {});
-  }, []);
+  }, [clearHistory]);
 
   /**
    * Handle download canvas
    */
   const handleDownload = useCallback(() => {
-    // We need to get the actual canvas element from the Canvas component
-    // For now, create a temporary canvas from current strokes
     const canvas = document.createElement('canvas');
     canvas.width = 800;
     canvas.height = 600;
     
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
+    
+    // Background color based on dark mode
+    ctx.fillStyle = darkMode ? '#1a1a1a' : '#ffffff';
     ctx.fillRect(0, 0, 800, 600);
     
-    // Import renderAllStrokes
-    import('../utils/canvas').then(({ renderAllStrokes }) => {
-      renderAllStrokes(ctx, strokes, 800, 600);
+    // Render all strokes
+    renderAllStrokes(ctx, strokes, 800, 600);
+    
+    const filename = `whiteboard_${roomId}_${Date.now()}.png`;
+    downloadCanvasAsPNG(canvas, filename);
+  }, [roomId, strokes, darkMode]);
+
+  /**
+   * Toggle dark mode
+   */
+  const handleToggleDarkMode = useCallback(() => {
+    setDarkMode(prev => !prev);
+  }, []);
+
+  /**
+   * Keyboard shortcuts
+   */
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ctrl+Z or Cmd+Z for undo
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
       
-      const filename = `whiteboard_${roomId}_${Date.now()}.png`;
-      downloadCanvasAsPNG(canvas, filename);
-    });
-  }, [roomId, strokes]);
+      // Ctrl+Y or Cmd+Shift+Z for redo
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // Get dynamic styles
+  const getStyles = () => ({
+    container: {
+      ...styles.container,
+      backgroundColor: darkMode ? '#1a1a1a' : '#ecf0f1',
+    },
+    title: {
+      ...styles.title,
+      color: darkMode ? '#ecf0f1' : '#2c3e50',
+    },
+    roomInfo: {
+      ...styles.roomInfo,
+      color: darkMode ? '#95a5a6' : '#7f8c8d',
+    },
+    usersPanel: {
+      ...styles.usersPanel,
+      backgroundColor: darkMode ? '#2c3e50' : '#fff',
+      borderColor: darkMode ? '#34495e' : '#ddd',
+    },
+    usersTitle: {
+      ...styles.usersTitle,
+      color: darkMode ? '#ecf0f1' : '#2c3e50',
+    },
+    userName: {
+      ...styles.userName,
+      color: darkMode ? '#bdc3c7' : '#34495e',
+    },
+    userItem: {
+      ...styles.userItem,
+      borderBottomColor: darkMode ? '#34495e' : '#ecf0f1',
+    },
+    canvasInfo: {
+      ...styles.canvasInfo,
+      backgroundColor: darkMode ? '#2c3e50' : '#fff',
+      borderColor: darkMode ? '#34495e' : '#ddd',
+      color: darkMode ? '#95a5a6' : '#7f8c8d',
+    },
+  });
+
+  const dynamicStyles = getStyles();
 
   // Loading state
   if (loading) {
     return (
-      <div style={styles.container}>
+      <div style={dynamicStyles.container}>
         <div style={styles.loading}>
           <div style={styles.spinner} />
-          <p>Joining room...</p>
+          <p style={{ color: darkMode ? '#ecf0f1' : '#7f8c8d' }}>Joining room...</p>
         </div>
       </div>
     );
@@ -140,7 +250,7 @@ export default function WhiteboardApp({ roomId, userId }) {
   // Error state
   if (error) {
     return (
-      <div style={styles.container}>
+      <div style={dynamicStyles.container}>
         <div style={styles.error}>
           <h2>❌ Error</h2>
           <p>{error}</p>
@@ -152,7 +262,7 @@ export default function WhiteboardApp({ roomId, userId }) {
   // Not joined state
   if (!joined) {
     return (
-      <div style={styles.container}>
+      <div style={dynamicStyles.container}>
         <div style={styles.info}>
           <p>Waiting to join room...</p>
         </div>
@@ -161,11 +271,11 @@ export default function WhiteboardApp({ roomId, userId }) {
   }
 
   return (
-    <div style={styles.container}>
+    <div style={dynamicStyles.container}>
       {/* Header */}
       <div style={styles.header}>
-        <h1 style={styles.title}>Collaborative Whiteboard</h1>
-        <div style={styles.roomInfo}>
+        <h1 style={dynamicStyles.title}>Collaborative Whiteboard</h1>
+        <div style={dynamicStyles.roomInfo}>
           <span style={styles.roomId}>Room: {roomId}</span>
           <span style={styles.clientCount}>
             👥 {clients.length} user{clients.length !== 1 ? 's' : ''} online
@@ -186,15 +296,21 @@ export default function WhiteboardApp({ roomId, userId }) {
             onWidthChange={setCurrentWidth}
             onClear={handleClear}
             onDownload={handleDownload}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            darkMode={darkMode}
+            onToggleDarkMode={handleToggleDarkMode}
           />
           
           {/* Online Users */}
-          <div style={styles.usersPanel}>
-            <h3 style={styles.usersTitle}>Online Users</h3>
+          <div style={dynamicStyles.usersPanel}>
+            <h3 style={dynamicStyles.usersTitle}>Online Users</h3>
             <ul style={styles.usersList}>
               {clients.map(client => (
-                <li key={client.socketId} style={styles.userItem}>
-                  <span style={styles.userName}>
+                <li key={client.socketId} style={dynamicStyles.userItem}>
+                  <span style={dynamicStyles.userName}>
                     {client.userId}
                     {client.userId === userId && (
                       <span style={styles.youBadge}>You</span>
@@ -216,10 +332,11 @@ export default function WhiteboardApp({ roomId, userId }) {
             currentWidth={currentWidth}
             width={800}
             height={600}
+            darkMode={darkMode}
           />
           
           {/* Canvas Info */}
-          <div style={styles.canvasInfo}>
+          <div style={dynamicStyles.canvasInfo}>
             <span>{strokes.length} stroke{strokes.length !== 1 ? 's' : ''}</span>
           </div>
         </div>
@@ -228,13 +345,14 @@ export default function WhiteboardApp({ roomId, userId }) {
   );
 }
 
-// Styles remain the same...
+// Styles (same as before, just base styles)
 const styles = {
   container: {
     minHeight: '100vh',
     backgroundColor: '#ecf0f1',
     padding: '20px',
     fontFamily: 'system-ui, -apple-system, sans-serif',
+    transition: 'background-color 0.3s',
   },
   header: {
     marginBottom: '24px',
@@ -244,12 +362,14 @@ const styles = {
     fontWeight: '700',
     color: '#2c3e50',
     marginBottom: '8px',
+    transition: 'color 0.3s',
   },
   roomInfo: {
     display: 'flex',
     gap: '16px',
     fontSize: '14px',
     color: '#7f8c8d',
+    transition: 'color 0.3s',
   },
   roomId: {
     fontWeight: '600',
@@ -273,12 +393,14 @@ const styles = {
     backgroundColor: '#fff',
     borderRadius: '8px',
     border: '1px solid #ddd',
+    transition: 'all 0.3s',
   },
   usersTitle: {
     fontSize: '16px',
     fontWeight: '600',
     color: '#2c3e50',
     marginBottom: '12px',
+    transition: 'color 0.3s',
   },
   usersList: {
     listStyle: 'none',
@@ -288,10 +410,12 @@ const styles = {
   userItem: {
     padding: '8px 0',
     borderBottom: '1px solid #ecf0f1',
+    transition: 'border-color 0.3s',
   },
   userName: {
     fontSize: '14px',
     color: '#34495e',
+    transition: 'color 0.3s',
   },
   youBadge: {
     marginLeft: '8px',
@@ -315,6 +439,7 @@ const styles = {
     fontSize: '14px',
     color: '#7f8c8d',
     textAlign: 'center',
+    transition: 'all 0.3s',
   },
   loading: {
     display: 'flex',

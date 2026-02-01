@@ -1,26 +1,6 @@
 // client/src/components/Toolbar.jsx
 import { DEFAULT_PALETTE } from '../utils/colors';
 
-/**
- * Toolbar Component
- * 
- * Provides controls for:
- * - Tool selection (pen, highlighter, eraser)
- * - Color picker
- * - Stroke width slider
- * - Canvas actions (clear, download)
- * 
- * Props:
- * - currentTool: Currently selected tool
- * - onToolChange: Callback for tool change
- * - currentColor: Currently selected color
- * - onColorChange: Callback for color change
- * - currentWidth: Current stroke width
- * - onWidthChange: Callback for width change
- * - onClear: Callback for clear canvas
- * - onDownload: Callback for download canvas
- * - disabled: Disable all controls
- */
 export default function Toolbar({
   currentTool = 'pen',
   onToolChange,
@@ -30,7 +10,13 @@ export default function Toolbar({
   onWidthChange,
   onClear,
   onDownload,
-  disabled = false
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
+  disabled = false,
+  darkMode = false,
+  onToggleDarkMode
 }) {
   
   const tools = [
@@ -47,11 +33,37 @@ export default function Toolbar({
     { value: 16, label: 'Very Thick' }
   ];
 
+  // Get dynamic styles based on dark mode
+  const getStyles = () => ({
+    ...styles,
+    toolbar: {
+      ...styles.toolbar,
+      backgroundColor: darkMode ? '#2c3e50' : '#f8f9fa',
+      borderColor: darkMode ? '#34495e' : '#ddd',
+    },
+    sectionLabel: {
+      ...styles.sectionLabel,
+      color: darkMode ? '#ecf0f1' : '#2c3e50',
+    },
+    toolButton: {
+      ...styles.toolButton,
+      backgroundColor: darkMode ? '#34495e' : '#fff',
+      borderColor: darkMode ? '#4a5f7f' : '#ddd',
+      color: darkMode ? '#ecf0f1' : '#2c3e50',
+    },
+    customColorLabel: {
+      ...styles.customColorLabel,
+      color: darkMode ? '#95a5a6' : '#7f8c8d',
+    },
+  });
+
+  const dynamicStyles = getStyles();
+
   return (
-    <div style={styles.toolbar}>
+    <div style={dynamicStyles.toolbar}>
       {/* Tool Selection */}
       <div style={styles.section}>
-        <label style={styles.sectionLabel}>Tool</label>
+        <label style={dynamicStyles.sectionLabel}>Tool</label>
         <div style={styles.toolGrid}>
           {tools.map(tool => (
             <button
@@ -59,7 +71,7 @@ export default function Toolbar({
               onClick={() => onToolChange?.(tool.id)}
               disabled={disabled}
               style={{
-                ...styles.toolButton,
+                ...dynamicStyles.toolButton,
                 ...(currentTool === tool.id && styles.toolButtonActive),
                 ...(disabled && styles.buttonDisabled)
               }}
@@ -73,7 +85,7 @@ export default function Toolbar({
 
       {/* Color Picker */}
       <div style={styles.section}>
-        <label style={styles.sectionLabel}>Color</label>
+        <label style={dynamicStyles.sectionLabel}>Color</label>
         <div style={styles.colorGrid}>
           {DEFAULT_PALETTE.map(color => (
             <button
@@ -101,13 +113,13 @@ export default function Toolbar({
             disabled={disabled || currentTool === 'eraser'}
             style={styles.customColorInput}
           />
-          <span style={styles.customColorLabel}>Custom</span>
+          <span style={dynamicStyles.customColorLabel}>Custom</span>
         </div>
       </div>
 
       {/* Stroke Width */}
       <div style={styles.section}>
-        <label style={styles.sectionLabel}>
+        <label style={dynamicStyles.sectionLabel}>
           Width: {currentWidth}px
         </label>
         <input
@@ -133,6 +145,9 @@ export default function Toolbar({
               disabled={disabled}
               style={{
                 ...styles.widthButton,
+                backgroundColor: darkMode ? '#34495e' : '#fff',
+                borderColor: darkMode ? '#4a5f7f' : '#ddd',
+                color: darkMode ? '#ecf0f1' : '#2c3e50',
                 ...(currentWidth === value && styles.widthButtonActive),
                 ...(disabled && styles.buttonDisabled)
               }}
@@ -143,9 +158,39 @@ export default function Toolbar({
         </div>
       </div>
 
+      {/* History Actions - NEW */}
+      <div style={styles.section}>
+        <label style={dynamicStyles.sectionLabel}>History</label>
+        <div style={styles.historyGrid}>
+          <button
+            onClick={onUndo}
+            disabled={disabled || !canUndo}
+            style={{
+              ...styles.historyButton,
+              ...(disabled || !canUndo ? styles.buttonDisabled : {})
+            }}
+            title="Undo (Ctrl+Z)"
+          >
+            ↶ Undo
+          </button>
+          
+          <button
+            onClick={onRedo}
+            disabled={disabled || !canRedo}
+            style={{
+              ...styles.historyButton,
+              ...(disabled || !canRedo ? styles.buttonDisabled : {})
+            }}
+            title="Redo (Ctrl+Y)"
+          >
+            ↷ Redo
+          </button>
+        </div>
+      </div>
+
       {/* Actions */}
       <div style={styles.section}>
-        <label style={styles.sectionLabel}>Actions</label>
+        <label style={dynamicStyles.sectionLabel}>Actions</label>
         <div style={styles.actionGrid}>
           <button
             onClick={onClear}
@@ -157,7 +202,7 @@ export default function Toolbar({
             }}
             title="Clear entire canvas"
           >
-            🗑️ Clear Canvas
+            🗑️ Clear
           </button>
           
           <button
@@ -173,6 +218,21 @@ export default function Toolbar({
             💾 Download
           </button>
         </div>
+      </div>
+
+      {/* Dark Mode Toggle - NEW */}
+      <div style={styles.section}>
+        <button
+          onClick={onToggleDarkMode}
+          style={{
+            ...styles.actionButton,
+            backgroundColor: darkMode ? '#f39c12' : '#34495e',
+            width: '100%',
+          }}
+          title="Toggle dark mode"
+        >
+          {darkMode ? '☀️' : '🌙'} {darkMode ? 'Light Mode' : 'Dark Mode'}
+        </button>
       </div>
     </div>
   );
@@ -272,6 +332,22 @@ const styles = {
     borderColor: '#3498db',
     backgroundColor: '#e3f2fd',
     fontWeight: '600',
+  },
+  historyGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '8px',
+  },
+  historyButton: {
+    padding: '10px 16px',
+    fontSize: '14px',
+    fontWeight: '600',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    color: '#fff',
+    backgroundColor: '#95a5a6',
   },
   actionGrid: {
     display: 'grid',
