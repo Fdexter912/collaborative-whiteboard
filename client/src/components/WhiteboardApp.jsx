@@ -1,11 +1,12 @@
 // client/src/components/WhiteboardApp.jsx
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRoom, useSocketEvent } from "../hooks/useSocket";
 import { useHistory } from "../hooks/useHistory";
 import socketService from "../services/socket";
 import Canvas from "./Canvas";
 import Toolbar from "./Toolbar";
 import { downloadCanvasAsPNG, renderAllStrokes } from "../utils/canvas";
+import { PerformanceMonitor } from '../utils/performance';
 
 export default function WhiteboardApp({ roomId, userId }) {
   // Room state
@@ -20,6 +21,9 @@ export default function WhiteboardApp({ roomId, userId }) {
   const [currentColor, setCurrentColor] = useState("#000000");
   const [currentWidth, setCurrentWidth] = useState(2);
   const [selectedStroke, setSelectedStroke] = useState(null);
+  const [showStats, setShowStats] = useState(false);
+  const [fps, setFps] = useState(0);
+  const perfMonitor = useRef(new PerformanceMonitor());
 
   // Dark mode state
   const [darkMode, setDarkMode] = useState(() => {
@@ -74,6 +78,18 @@ export default function WhiteboardApp({ roomId, userId }) {
     setStrokes([]);
     clearHistory();
   });
+
+  // Performance monitoring
+  useEffect(() => {
+  if (!showStats) return;
+  
+  const interval = setInterval(() => {
+    perfMonitor.current.tick();
+    setFps(perfMonitor.current.getFPS());
+  }, 100);
+  
+  return () => clearInterval(interval);
+}, [showStats]);
 
   /**
    * Handle stroke completion
@@ -225,6 +241,12 @@ export default function WhiteboardApp({ roomId, userId }) {
         e.preventDefault();
         handleDeleteSelected();
       }
+
+        // Ctrl+P or Cmd+P to toggle performance stats
+      if (e.key === 'p' && (e.ctrlKey || e.metaKey)) {
+  e.preventDefault();
+  setShowStats(prev => !prev);
+}
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -385,6 +407,29 @@ export default function WhiteboardApp({ roomId, userId }) {
           </div>
         </div>
       </div>
+      {showStats && (
+  <div style={{
+    position: 'fixed',
+    top: '10px',
+    right: '10px',
+    padding: '12px 16px',
+    backgroundColor: darkMode ? 'rgba(44, 62, 80, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+    border: `1px solid ${darkMode ? '#34495e' : '#ddd'}`,
+    borderRadius: '6px',
+    fontFamily: 'monospace',
+    fontSize: '14px',
+    color: darkMode ? '#ecf0f1' : '#2c3e50',
+    zIndex: 1000,
+  }}>
+    <div><strong>Performance Stats</strong></div>
+    <div>FPS: {fps}</div>
+    <div>Strokes: {strokes.length}</div>
+    <div>Points: {strokes.reduce((sum, s) => sum + s.points.length, 0)}</div>
+    <div style={{ marginTop: '8px', fontSize: '12px', color: darkMode ? '#95a5a6' : '#7f8c8d' }}>
+      Press Ctrl+P to toggle
+    </div>
+  </div>
+)}
     </div>
   );
 }
