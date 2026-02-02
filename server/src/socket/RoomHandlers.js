@@ -92,7 +92,8 @@ function handleRoomJoin(io, socket, roomManager) {
         socketId: socket.id,
         boardState: room.boardState,
         clients: room.getClientList(),
-        metadata: room.getMetadata()
+        metadata: room.getMetadata(),
+        sequebce: room.getCurrentSequence()
       });
 
       // Notify other clients in the room
