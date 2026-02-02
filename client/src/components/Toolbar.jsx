@@ -19,6 +19,8 @@ export default function Toolbar({
   onToggleDarkMode,
   selectedStroke,
   onDeleteSelected,
+  onExport,
+onImport,
 }) {
   const tools = [
     { id: "pen", label: "✏️ Pen", description: "Draw solid lines" },
@@ -263,6 +265,37 @@ export default function Toolbar({
           {darkMode ? "☀️" : "🌙"} {darkMode ? "Light Mode" : "Dark Mode"}
         </button>
       </div>
+      {/* Export/Import */}
+<div style={styles.section}>
+  <label style={dynamicStyles.sectionLabel}>Data</label>
+  <div style={styles.actionGrid}>
+    <button
+      onClick={onExport}
+      disabled={disabled}
+      style={{
+        ...styles.actionButton,
+        backgroundColor: '#9b59b6',
+        ...(disabled && styles.buttonDisabled)
+      }}
+      title="Export as JSON"
+    >
+      📤 Export
+    </button>
+    
+    <button
+      onClick={onImport}
+      disabled={disabled}
+      style={{
+        ...styles.actionButton,
+        backgroundColor: '#3498db',
+        ...(disabled && styles.buttonDisabled)
+      }}
+      title="Import from JSON"
+    >
+      📥 Import
+    </button>
+  </div>
+</div>
     </div>
   );
 }

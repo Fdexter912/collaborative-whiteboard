@@ -7,6 +7,7 @@ import Canvas from "./Canvas";
 import Toolbar from "./Toolbar";
 import { downloadCanvasAsPNG, renderAllStrokes } from "../utils/canvas";
 import { PerformanceMonitor } from '../utils/performance';
+import { exportToJSON, importFromJSON, downloadJSON, loadJSONFile } from '../utils/export';
 
 export default function WhiteboardApp({ roomId, userId }) {
   // Room state
@@ -216,6 +217,54 @@ export default function WhiteboardApp({ roomId, userId }) {
     socketService.send("draw.deleteStroke", { strokeId: selectedStroke.id });
   }, [selectedStroke]);
 
+  const handleExport = useCallback(() => {
+  const json = exportToJSON(strokes, roomId, {
+    exportedBy: userId,
+    clientCount: clients.length
+  });
+  
+  const filename = `whiteboard_${roomId}_${Date.now()}.json`;
+  downloadJSON(json, filename);
+  
+  console.log('📤 Exported', strokes.length, 'strokes');
+}, [strokes, roomId, userId, clients]);
+
+const handleImport = useCallback(async () => {
+  if (!window.confirm('Import will replace current strokes. Continue?')) {
+    return;
+  }
+  
+  try {
+    const jsonString = await loadJSONFile();
+    const result = importFromJSON(jsonString);
+    
+    if (!result.success) {
+      alert(`Import failed: ${result.error}`);
+      return;
+    }
+    
+    // Clear current strokes
+    setStrokes([]);
+    clearHistory();
+    
+    // Send clear to server
+    socketService.send('draw.clear', {});
+    
+    // Send all imported strokes
+    result.data.strokes.forEach(stroke => {
+      // Remove server-assigned fields
+      const { id, author, timestamp, version, ...strokeData } = stroke;
+      socketService.send('draw.stroke', strokeData);
+    });
+    
+    console.log('📥 Imported', result.data.strokes.length, 'strokes');
+  } catch (error) {
+    console.error('Import error:', error);
+    alert(`Import failed: ${error.message}`);
+  }
+}, [clearHistory]);
+
+
   /**
    * Keyboard shortcuts
    */
@@ -365,6 +414,8 @@ export default function WhiteboardApp({ roomId, userId }) {
             onToggleDarkMode={handleToggleDarkMode}
             selectedStroke={selectedStroke}
             onDeleteSelected={handleDeleteSelected}
+            onExport={handleExport}
+  onImport={handleImport}
           />
 
           {/* Online Users */}
