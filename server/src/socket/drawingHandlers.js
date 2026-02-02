@@ -1,21 +1,24 @@
 // server/src/socket/drawingHandlers.js
-const Stroke = require('../models/Stroke');
-const { RateLimiter } = require('../utils/validation');
+const Stroke = require("../models/Stroke");
+const { RateLimiter } = require("../utils/validation");
 
 // Rate limiter: Max 100 strokes per minute per user
 const strokeRateLimiter = new RateLimiter(100, 60000);
 
 // Clean up rate limiter every 5 minutes
-setInterval(() => {
-  strokeRateLimiter.cleanup();
-}, 5 * 60 * 1000);
+setInterval(
+  () => {
+    strokeRateLimiter.cleanup();
+  },
+  5 * 60 * 1000,
+);
 
 /**
  * Handle new stroke creation
- * 
+ *
  * Event: 'draw.stroke'
  * Payload: { points, color, width, tool }
- * 
+ *
  * Flow:
  * 1. Validate stroke data
  * 2. Check rate limit
@@ -31,80 +34,85 @@ function handleDrawStroke(io, socket, roomManager) {
 
       // ===== VALIDATION =====
 
-      // Check if user is in a room
       if (!roomId || !userId) {
-        socket.emit('error', {
-          code: 'NOT_IN_ROOM',
-          message: 'Must join a room before drawing'
+        socket.emit("error", {
+          code: "NOT_IN_ROOM",
+          message: "Must join a room before drawing",
         });
         return;
       }
 
-      // Get room
       const room = roomManager.getRoom(roomId);
       if (!room) {
-        socket.emit('error', {
-          code: 'ROOM_NOT_FOUND',
-          message: 'Room not found'
+        socket.emit("error", {
+          code: "ROOM_NOT_FOUND",
+          message: "Room not found",
         });
         return;
       }
 
-      // Rate limiting
       if (!strokeRateLimiter.isAllowed(userId)) {
-        socket.emit('error', {
-          code: 'RATE_LIMIT_EXCEEDED',
-          message: 'Too many strokes. Please slow down.'
+        socket.emit("error", {
+          code: "RATE_LIMIT_EXCEEDED",
+          message: "Too many strokes. Please slow down.",
         });
         console.warn(`⚠️  Rate limit exceeded for ${userId} in room ${roomId}`);
         return;
       }
 
-      // Validate stroke data
       const validation = Stroke.validate(strokeData);
       if (!validation.valid) {
-        socket.emit('error', {
-          code: 'INVALID_STROKE',
-          message: 'Invalid stroke data',
-          errors: validation.errors
+        socket.emit("error", {
+          code: "INVALID_STROKE",
+          message: "Invalid stroke data",
+          errors: validation.errors,
         });
         return;
       }
 
-      // Additional validation: Check data size
       const pointCount = strokeData.points.length;
       if (pointCount > 10000) {
-        socket.emit('error', {
-          code: 'STROKE_TOO_LARGE',
-          message: 'Stroke has too many points (max 10,000)'
+        socket.emit("error", {
+          code: "STROKE_TOO_LARGE",
+          message: "Stroke has too many points (max 10,000)",
         });
         return;
       }
 
       // ===== CREATE STROKE =====
 
-      // Create stroke with server metadata
       const stroke = Stroke.create(strokeData, userId);
-
-      // Add to room
       room.addStroke(stroke);
+
+      // ===== SEQUENCING - NEW =====
+
+      const sequence = room.getNextSequence();
+      const timestamp = Date.now();
+
+      // Create event for broadcast
+      const event = {
+        type: "draw.stroke",
+        seq: sequence,
+        timestamp,
+        data: stroke.toJSON(),
+      };
+
+      // Add to event log
+      room.addEventToLog(event);
 
       // ===== BROADCAST =====
 
-      // Broadcast to all clients in room (including sender)
-      io.to(roomId).emit('draw.stroke', stroke.toJSON());
+      io.to(roomId).emit("draw.stroke", event);
 
-      // Log for monitoring
       console.log(
-        `✏️  ${userId} drew stroke ${stroke.id} in room ${roomId} ` +
-        `(${pointCount} points, ${room.stats.totalStrokes} total strokes)`
+        `✏️  [seq:${sequence}] ${userId} drew stroke ${stroke.id} in room ${roomId} ` +
+          `(${pointCount} points, ${room.stats.totalStrokes} total)`,
       );
-
     } catch (error) {
-      console.error('Error in handleDrawStroke:', error);
-      socket.emit('error', {
-        code: 'DRAW_FAILED',
-        message: 'Failed to process stroke'
+      console.error("Error in handleDrawStroke:", error);
+      socket.emit("error", {
+        code: "DRAW_FAILED",
+        message: "Failed to process stroke",
       });
     }
   };
@@ -112,10 +120,10 @@ function handleDrawStroke(io, socket, roomManager) {
 
 /**
  * Handle stroke deletion
- * 
+ *
  * Event: 'draw.deleteStroke'
  * Payload: { strokeId }
- * 
+ *
  * Note: In this version, any user can delete any stroke.
  * Module 9 will add proper authorization (only author can delete).
  */
@@ -126,17 +134,17 @@ function handleDeleteStroke(io, socket, roomManager) {
 
       // Validation
       if (!roomId || !userId) {
-        socket.emit('error', {
-          code: 'NOT_IN_ROOM',
-          message: 'Must join a room first'
+        socket.emit("error", {
+          code: "NOT_IN_ROOM",
+          message: "Must join a room first",
         });
         return;
       }
 
-      if (!strokeId || typeof strokeId !== 'string') {
-        socket.emit('error', {
-          code: 'INVALID_STROKE_ID',
-          message: 'Stroke ID must be a string'
+      if (!strokeId || typeof strokeId !== "string") {
+        socket.emit("error", {
+          code: "INVALID_STROKE_ID",
+          message: "Stroke ID must be a string",
         });
         return;
       }
@@ -144,9 +152,9 @@ function handleDeleteStroke(io, socket, roomManager) {
       // Get room
       const room = roomManager.getRoom(roomId);
       if (!room) {
-        socket.emit('error', {
-          code: 'ROOM_NOT_FOUND',
-          message: 'Room not found'
+        socket.emit("error", {
+          code: "ROOM_NOT_FOUND",
+          message: "Room not found",
         });
         return;
       }
@@ -155,23 +163,35 @@ function handleDeleteStroke(io, socket, roomManager) {
       const removed = room.removeStroke(strokeId);
 
       if (!removed) {
-        socket.emit('error', {
-          code: 'STROKE_NOT_FOUND',
-          message: 'Stroke not found'
+        socket.emit("error", {
+          code: "STROKE_NOT_FOUND",
+          message: "Stroke not found",
         });
         return;
       }
+      // ===== SEQUENCING - NEW =====
 
+      const sequence = room.getNextSequence();
+      const timestamp = Date.now();
+
+      const event = {
+        type: "draw.deleteStroke",
+        seq: sequence,
+        timestamp,
+        data: { strokeId },
+      };
+      room.addEventToLog(event);
       // Broadcast deletion to all clients
-      io.to(roomId).emit('draw.deleteStroke', { strokeId });
+      io.to(roomId).emit("draw.deleteStroke", event);
 
-      console.log(`🗑️  ${userId} deleted stroke ${strokeId} in room ${roomId}`);
-
+      console.log(
+        `🗑️  [seq:${sequence}] ${userId} deleted stroke ${strokeId} in room ${roomId}`,
+      );
     } catch (error) {
-      console.error('Error in handleDeleteStroke:', error);
-      socket.emit('error', {
-        code: 'DELETE_FAILED',
-        message: 'Failed to delete stroke'
+      console.error("Error in handleDeleteStroke:", error);
+      socket.emit("error", {
+        code: "DELETE_FAILED",
+        message: "Failed to delete stroke",
       });
     }
   };
@@ -179,10 +199,10 @@ function handleDeleteStroke(io, socket, roomManager) {
 
 /**
  * Handle clear canvas request
- * 
+ *
  * Event: 'draw.clear'
  * Payload: {}
- * 
+ *
  * Removes all strokes from the board.
  * Module 9 will add authorization (only certain users can clear).
  */
@@ -193,9 +213,9 @@ function handleClearCanvas(io, socket, roomManager) {
 
       // Validation
       if (!roomId || !userId) {
-        socket.emit('error', {
-          code: 'NOT_IN_ROOM',
-          message: 'Must join a room first'
+        socket.emit("error", {
+          code: "NOT_IN_ROOM",
+          message: "Must join a room first",
         });
         return;
       }
@@ -203,9 +223,9 @@ function handleClearCanvas(io, socket, roomManager) {
       // Get room
       const room = roomManager.getRoom(roomId);
       if (!room) {
-        socket.emit('error', {
-          code: 'ROOM_NOT_FOUND',
-          message: 'Room not found'
+        socket.emit("error", {
+          code: "ROOM_NOT_FOUND",
+          message: "Room not found",
         });
         return;
       }
@@ -213,16 +233,108 @@ function handleClearCanvas(io, socket, roomManager) {
       // Clear all strokes
       const count = room.clearStrokes();
 
+      // ===== SEQUENCING - NEW =====
+      const sequence = room.getNextSequence();
+      const timestamp = Date.now();
+
+      const event = {
+        type: "draw.clear",
+        seq: sequence,
+        timestamp,
+        data: { clearedBy: userId },
+      };
+
+      room.addEventToLog(event);
+
       // Broadcast clear to all clients
-      io.to(roomId).emit('draw.clear', { clearedBy: userId });
+      io.to(roomId).emit("draw.clear", event);
 
-      console.log(`🧹 ${userId} cleared canvas in room ${roomId} (${count} strokes removed)`);
-
+      console.log(
+        `🧹 [seq:${sequence}] ${userId} cleared canvas in room ${roomId} (${count} strokes removed)`,
+      );
     } catch (error) {
-      console.error('Error in handleClearCanvas:', error);
-      socket.emit('error', {
-        code: 'CLEAR_FAILED',
-        message: 'Failed to clear canvas'
+      console.error("Error in handleClearCanvas:", error);
+      socket.emit("error", {
+        code: "CLEAR_FAILED",
+        message: "Failed to clear canvas",
+      });
+    }
+  };
+}
+
+/**
+ * Handle request for missing events
+ * NEW for Module 4
+ */
+function handleRequestEvents(io, socket, roomManager) {
+  return ({ fromSeq, toSeq }) => {
+    try {
+      const { roomId, userId } = socket.data;
+
+      if (!roomId) {
+        socket.emit("error", {
+          code: "NOT_IN_ROOM",
+          message: "Must join a room first",
+        });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        socket.emit("error", {
+          code: "ROOM_NOT_FOUND",
+          message: "Room not found",
+        });
+        return;
+      }
+
+      // Validate sequence numbers
+      if (typeof fromSeq !== "number" || typeof toSeq !== "number") {
+        socket.emit("error", {
+          code: "INVALID_SEQUENCE",
+          message: "Sequence numbers must be integers",
+        });
+        return;
+      }
+
+      if (fromSeq > toSeq) {
+        socket.emit("error", {
+          code: "INVALID_RANGE",
+          message: "fromSeq must be <= toSeq",
+        });
+        return;
+      }
+
+      // Limit range to prevent abuse
+      const maxRange = 100;
+      if (toSeq - fromSeq > maxRange) {
+        socket.emit("error", {
+          code: "RANGE_TOO_LARGE",
+          message: `Range too large. Max ${maxRange} events.`,
+        });
+        return;
+      }
+
+      // Get events
+      const events = room.getEventsInRange(fromSeq, toSeq);
+
+      // Send events
+      socket.emit("sync.events", {
+        fromSeq,
+        toSeq,
+        events,
+        currentSeq: room.getCurrentSequence(),
+      });
+
+      console.log(
+        `🔄 [sync] ${userId} requested events ${fromSeq}-${toSeq}, ` +
+          `sent ${events.length} events`,
+      );
+    } catch (error) {
+      console.error("Error in handleRequestEvents:", error);
+      socket.emit("error", {
+        code: "SYNC_FAILED",
+        message: "Failed to retrieve events",
       });
     }
   };
@@ -231,5 +343,6 @@ function handleClearCanvas(io, socket, roomManager) {
 module.exports = {
   handleDrawStroke,
   handleDeleteStroke,
-  handleClearCanvas
+  handleClearCanvas,
+  handleRequestEvents, // NEW
 };

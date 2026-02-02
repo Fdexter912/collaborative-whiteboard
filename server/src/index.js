@@ -9,7 +9,8 @@ const { handleRoomJoin, handleDisconnect } = require('./socket/RoomHandlers');
 const { 
   handleDrawStroke, 
   handleDeleteStroke, 
-  handleClearCanvas 
+  handleClearCanvas,
+  handleRequestEvents 
 } = require('./socket/drawingHandlers');
 
 const app = express();
@@ -69,6 +70,9 @@ io.on('connection', (socket) => {
   socket.on('draw.stroke', handleDrawStroke(io, socket, roomManager));
   socket.on('draw.deleteStroke', handleDeleteStroke(io, socket, roomManager));
   socket.on('draw.clear', handleClearCanvas(io, socket, roomManager));
+
+  // Sync handlers (Module 4)
+  socket.on('sync.requestEvents', handleRequestEvents(io, socket, roomManager));
 });
 
 // Error handling
