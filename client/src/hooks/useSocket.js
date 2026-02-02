@@ -121,7 +121,7 @@ export function useRoom(roomId, userId) {
         setJoined(true);
         setLoading(false);
         setClients(data.clients || []);
-        setBoardState(data.boardState || { strokes: [], textBlocks: [] });
+        setBoardState(data.boardState || { strokes: [], textBlocks: [], sequence: data.sequence || 0 });
         setError(null);
       })
       .catch((err) => {
