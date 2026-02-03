@@ -340,9 +340,83 @@ function handleRequestEvents(io, socket, roomManager) {
   };
 }
 
+/**
+ * Handle sync request from client
+ * NEW for Module 4 - Commit 3
+ */
+function handleSyncRequest(io, socket, roomManager) {
+  return ({ lastSeq, _ackId }, callback) => {
+    try {
+      const { roomId, userId } = socket.data;
+
+      if (!roomId) {
+        const error = {
+          error: "NOT_IN_ROOM",
+          message: "Must join a room first",
+        };
+        if (callback) callback(error);
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        const error = { error: "ROOM_NOT_FOUND", message: "Room not found" };
+        if (callback) callback(error);
+        return;
+      }
+
+      const currentSeq = room.getCurrentSequence();
+
+      // Client is up to date
+      if (lastSeq >= currentSeq) {
+        console.log(`✅ [sync] ${userId} is up to date (seq ${lastSeq})`);
+
+        if (callback) {
+          callback({
+            success: true,
+            currentSeq,
+            events: [],
+            upToDate: true,
+          });
+        }
+        return;
+      }
+
+      // Get missing events
+      const events = room.getEventsSince(lastSeq);
+
+      console.log(
+        `🔄 [sync] ${userId} requested sync from ${lastSeq}, ` +
+          `sending ${events.length} events (current: ${currentSeq})`,
+      );
+
+      // Send response
+      if (callback) {
+        callback({
+          success: true,
+          currentSeq,
+          events,
+          upToDate: false,
+          from: lastSeq + 1,
+          to: currentSeq,
+        });
+      }
+
+      // Update client's last seen sequence
+      room.updateClientSequence(socket.id, currentSeq);
+    } catch (error) {
+      console.error("Error in handleSyncRequest:", error);
+      if (callback) {
+        callback({ error: "SYNC_FAILED", message: "Failed to sync" });
+      }
+    }
+  };
+}
+
 module.exports = {
   handleDrawStroke,
   handleDeleteStroke,
   handleClearCanvas,
-  handleRequestEvents, // NEW
+  handleRequestEvents,
+  handleSyncRequest,
 };

@@ -1,106 +1,196 @@
 // client/src/hooks/useSyncManager.js
-import { useRef, useCallback, useEffect } from 'react';
-import { EventQueue } from '../utils/eventQueue';
-import socketService from '../services/socket';
+import { useRef, useCallback, useEffect, useState } from "react";
+import { EventQueue } from "../utils/eventQueue";
+import socketService from "../services/socket";
 
-/**
- * useSyncManager Hook
- * 
- * Manages event synchronization and ordering.
- * Handles missing event detection and recovery.
- */
 export function useSyncManager(roomId) {
   const eventQueue = useRef(new EventQueue());
   const syncTimer = useRef(null);
+  const syncInProgress = useRef(false);
 
-  /**
-   * Initialize sync manager with starting sequence
-   */
+  // Track sync state - NEW
+  const [syncStatus, setSyncStatus] = useState({
+    syncing: false,
+    lastSyncTime: null,
+    failedAttempts: 0,
+  });
+
   const initialize = useCallback((startSeq) => {
     eventQueue.current.initialize(startSeq);
+    setSyncStatus({
+      syncing: false,
+      lastSyncTime: Date.now(),
+      failedAttempts: 0,
+    });
   }, []);
 
-  /**
-   * Process incoming event
-   * Returns events ready to apply
-   */
   const processEvent = useCallback((event) => {
     return eventQueue.current.addEvent(event);
   }, []);
 
   /**
-   * Request missing events from server
+   * Request missing events using new sync protocol
+   * UPDATED for Commit 3
    */
   const requestMissingEvents = useCallback(() => {
     const gapRange = eventQueue.current.getGapRange();
-    
+
     if (!gapRange) {
       return;
     }
 
     console.log(`🔄 Requesting missing events ${gapRange.from}-${gapRange.to}`);
-    
-    socketService.send('sync.requestEvents', {
+
+    socketService.send("sync.requestEvents", {
       fromSeq: gapRange.from,
-      toSeq: gapRange.to
+      toSeq: gapRange.to,
     });
   }, []);
 
   /**
-   * Check for gaps and request if needed
+   * Request full sync from server
+   * NEW for Commit 3
    */
-  const checkAndSync = useCallback(() => {
-    if (eventQueue.current.hasGaps()) {
-      console.log('🔍 Gap detected, requesting missing events...');
-      requestMissingEvents();
+  const requestFullSync = useCallback(async () => {
+    if (syncInProgress.current) {
+      console.log("⏳ Sync already in progress, skipping...");
+      return;
     }
-  }, [requestMissingEvents]);
+
+    const lastSeq = eventQueue.current.getLastAppliedSeq();
+
+    console.log(`🔄 Requesting full sync from sequence ${lastSeq}`);
+
+    syncInProgress.current = true;
+    setSyncStatus((prev) => ({ ...prev, syncing: true }));
+
+    try {
+      const response = await socketService.requestSync(lastSeq);
+
+      if (response.upToDate) {
+        console.log("✅ Already up to date");
+        setSyncStatus({
+          syncing: false,
+          lastSyncTime: Date.now(),
+          failedAttempts: 0,
+        });
+      } else {
+        console.log(`📦 Received ${response.events.length} events in sync`);
+
+        // Process all events
+        const allReady = [];
+        response.events.forEach((event) => {
+          const ready = eventQueue.current.addEvent(event);
+          allReady.push(...ready);
+        });
+
+        setSyncStatus({
+          syncing: false,
+          lastSyncTime: Date.now(),
+          failedAttempts: 0,
+        });
+
+        // Emit sync complete event with all ready events
+        socketService.emitToListeners("sync.complete", allReady);
+
+        return allReady;
+      }
+    } catch (error) {
+      console.error("❌ Sync request failed:", error);
+
+      setSyncStatus((prev) => ({
+        syncing: false,
+        lastSyncTime: Date.now(),
+        failedAttempts: prev.failedAttempts + 1,
+      }));
+
+      throw error;
+    } finally {
+      syncInProgress.current = false;
+    }
+  }, []);
 
   /**
-   * Start periodic gap checking
+   * Check for gaps and sync
+   * UPDATED for Commit 3
+   */
+  const checkAndSync = useCallback(async () => {
+    // Don't sync if already syncing
+    if (syncInProgress.current) {
+      return;
+    }
+
+    const stats = eventQueue.current.getStats();
+
+    // No gaps - all good
+    if (!stats.hasGaps) {
+      return;
+    }
+
+    const gapRange = stats.gapRange;
+    const gapSize = gapRange.to - gapRange.from + 1;
+
+    console.log(
+      `🔍 Gap detected: ${gapSize} missing events (${gapRange.from}-${gapRange.to})`,
+    );
+
+    // Small gap - request specific events
+    if (gapSize <= 10) {
+      requestMissingEvents();
+    } else {
+      // Large gap - request full sync
+      console.log("📦 Large gap detected, requesting full sync...");
+      try {
+        const events = await requestFullSync();
+        return events;
+      } catch (error) {
+        console.error("Full sync failed:", error);
+      }
+    }
+  }, [requestMissingEvents, requestFullSync]);
+
+  /**
+   * Start sync monitor
+   * UPDATED for Commit 3
    */
   const startSyncMonitor = useCallback(() => {
     if (syncTimer.current) {
       return;
     }
 
-    // Check for gaps every 2 seconds
+    // Check every 2 seconds
     syncTimer.current = setInterval(() => {
       checkAndSync();
     }, 2000);
 
-    console.log('👁️  Sync monitor started');
+    console.log("👁️  Sync monitor started");
   }, [checkAndSync]);
 
-  /**
-   * Stop periodic gap checking
-   */
   const stopSyncMonitor = useCallback(() => {
     if (syncTimer.current) {
       clearInterval(syncTimer.current);
       syncTimer.current = null;
-      console.log('👁️  Sync monitor stopped');
+      console.log("👁️  Sync monitor stopped");
     }
   }, []);
 
-  /**
-   * Get current stats
-   */
   const getStats = useCallback(() => {
-    return eventQueue.current.getStats();
-  }, []);
+    return {
+      ...eventQueue.current.getStats(),
+      syncStatus,
+    };
+  }, [syncStatus]);
 
-  /**
-   * Clear sync state
-   */
   const clear = useCallback(() => {
     eventQueue.current.clear();
     stopSyncMonitor();
+    setSyncStatus({
+      syncing: false,
+      lastSyncTime: null,
+      failedAttempts: 0,
+    });
   }, [stopSyncMonitor]);
 
-  /**
-   * Cleanup on unmount
-   */
   useEffect(() => {
     return () => {
       stopSyncMonitor();
@@ -111,10 +201,12 @@ export function useSyncManager(roomId) {
     initialize,
     processEvent,
     requestMissingEvents,
+    requestFullSync, // NEW
     startSyncMonitor,
     stopSyncMonitor,
     checkAndSync,
     getStats,
-    clear
+    clear,
+    syncStatus, // NEW
   };
 }
